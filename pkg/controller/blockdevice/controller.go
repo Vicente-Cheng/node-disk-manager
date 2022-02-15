@@ -178,38 +178,42 @@ func (c *Controller) OnBlockDeviceChange(key string, device *diskv1.BlockDevice)
 		return nil, nil
 	}
 
-	var shouldEnqueue bool
-
 	deviceCpy := device.DeepCopy()
-	fs := *deviceCpy.Spec.FileSystem
-	fsStatus := *deviceCpy.Status.DeviceStatus.FileSystem
+	filesystem := c.BlockInfo.GetFileSystemInfoByFsUUID(deviceCpy.Status.DeviceStatus.Details.UUID)
 
-	if fs.ForceFormatted && fsStatus.LastFormattedAt == nil {
-		if err := c.forceFormat(deviceCpy); err != nil {
-			err := fmt.Errorf("failed to force format the device %s, %s", device.Spec.DevPath, err.Error())
+	needFormat := deviceCpy.Spec.FileSystem.ForceFormatted && deviceCpy.Status.DeviceStatus.FileSystem.LastFormattedAt == nil
+	if needFormat {
+		err := c.forceFormat(deviceCpy, filesystem)
+		if err != nil {
+			err := fmt.Errorf("failed to force format device %s: %s", device.Name, err.Error())
 			logrus.Error(err)
 			diskv1.DeviceFormatting.SetError(deviceCpy, "", err)
 			diskv1.DeviceFormatting.SetStatusBool(deviceCpy, false)
+		}
+		if !reflect.DeepEqual(device, deviceCpy) {
 			return c.Blockdevices.Update(deviceCpy)
 		}
-	}
-
-	// mount device by path, and skip mount partitioned device
-	if !deviceCpy.Status.DeviceStatus.Partitioned && fs.MountPoint != fsStatus.MountPoint {
-		if err := updateDeviceMount(deviceCpy.Spec.DevPath, fs.MountPoint, fsStatus.MountPoint); err != nil {
-			err := fmt.Errorf("failed to mount the device %s to path %s, error: %s", device.Spec.DevPath, fs.MountPoint, err.Error())
-			logrus.Error(err)
-			diskv1.DeviceMounted.SetError(deviceCpy, "", err)
-			diskv1.DeviceMounted.SetStatusBool(deviceCpy, false)
-			return c.Blockdevices.Update(deviceCpy)
-		}
-	}
-
-	if err := c.updateFileSystemStatus(deviceCpy); err != nil {
 		return device, err
 	}
 
-	needProvision := fs.MountPoint != "" && fs.Provisioned
+	// mount device by path, and skip mount partitioned device
+	needUpdateMount := filesystem != nil && filesystem.MountPoint != deviceCpy.Spec.FileSystem.MountPoint
+	if needUpdateMount {
+		err := c.updateDeviceMount(deviceCpy, filesystem)
+		if err != nil {
+			err := fmt.Errorf("failed to update device mount %s: %s", device.Name, err.Error())
+			logrus.Error(err)
+			diskv1.DeviceMounted.SetError(deviceCpy, "", err)
+			diskv1.DeviceMounted.SetStatusBool(deviceCpy, false)
+		}
+		if !reflect.DeepEqual(device, deviceCpy) {
+			return c.Blockdevices.Update(deviceCpy)
+		}
+		return device, err
+	}
+
+	var shouldEnqueue bool
+	needProvision := deviceCpy.Spec.FileSystem.MountPoint != "" && deviceCpy.Spec.FileSystem.Provisioned
 	switch {
 	case needProvision && device.Status.ProvisionPhase == diskv1.ProvisionPhaseUnprovisioned:
 		if err := c.provisionDeviceToNode(deviceCpy); err != nil {
@@ -259,52 +263,45 @@ func ConvertBlockDevicesToMap(bds []*diskv1.BlockDevice) map[string]*diskv1.Bloc
 	return bdMap
 }
 
-func (c *Controller) updateFileSystemStatus(device *diskv1.BlockDevice) error {
-	// fetch the latest device filesystem info
-	uuid := device.Status.DeviceStatus.Details.UUID
-	filesystem := c.BlockInfo.GetFileSystemInfoByFsUUID(uuid)
-	mountPoint := device.Spec.FileSystem.MountPoint
-	device.Status.DeviceStatus.FileSystem.Type = filesystem.Type
-	device.Status.DeviceStatus.FileSystem.IsReadOnly = filesystem.IsReadOnly
-	device.Status.DeviceStatus.FileSystem.MountPoint = filesystem.MountPoint
-
-	if filesystem.MountPoint != "" && filesystem.Type != "" {
-		err := isValidFileSystem(device.Spec.FileSystem, device.Status.DeviceStatus.FileSystem)
-		mounted := err == nil && filesystem.MountPoint != ""
-		diskv1.DeviceMounted.SetError(device, "", err)
-		diskv1.DeviceMounted.SetStatusBool(device, mounted)
-	} else if mountPoint != "" && device.Status.DeviceStatus.Partitioned {
-		diskv1.DeviceMounted.SetError(device, "", fmt.Errorf("cannot mount parent device with partitions"))
-		diskv1.DeviceMounted.SetStatusBool(device, false)
-	} else if mountPoint == "" && mountPoint == filesystem.MountPoint {
-		existingMount := device.Status.DeviceStatus.FileSystem.MountPoint
-		if existingMount != "" {
-			if err := disk.UmountDisk(existingMount); err != nil {
-				return err
-			}
+func (c *Controller) updateDeviceMount(device *diskv1.BlockDevice, filesystem *block.FileSystemInfo) error {
+	expectedMountPoint := device.Spec.FileSystem.MountPoint
+	if expectedMountPoint != "" && device.Status.DeviceStatus.Partitioned && diskv1.DeviceMounted.IsTrue(device) {
+		return fmt.Errorf("cannot mount parent device with partitions")
+	}
+	// umount the previous path if exist
+	if filesystem != nil && filesystem.MountPoint != "" {
+		logrus.Infof("Unmount device %s from path %s", device.Name, filesystem.MountPoint)
+		if err := disk.UmountDisk(filesystem.MountPoint); err != nil {
+			return err
 		}
 		diskv1.DeviceMounted.SetError(device, "", nil)
 		diskv1.DeviceMounted.SetStatusBool(device, false)
 	}
 
-	return nil
-}
+	if expectedMountPoint != "" {
+		logrus.Debugf("Mount deivce %s to %s", device.Name, expectedMountPoint)
+		// TODO(weihanglo): Shouldn't use devpath to mount because it is not stable.
+		if err := disk.MountDisk(device.Spec.DevPath, expectedMountPoint); err != nil {
+			return err
+		}
+		diskv1.DeviceMounted.SetError(device, "", nil)
+		diskv1.DeviceMounted.SetStatusBool(device, true)
+	}
 
-func updateDeviceMount(devPath, mountPoint, existingMount string) error {
-	// umount the previous path if exist
-	if existingMount != "" {
-		logrus.Debugf("start unmounting dev %s from path %s", devPath, mountPoint)
-		if err := disk.UmountDisk(existingMount); err != nil {
+	filesystem = c.BlockInfo.GetFileSystemInfoByFsUUID(device.Status.DeviceStatus.Details.UUID)
+	if filesystem == nil {
+		return fmt.Errorf("failed to get filesystem info")
+	}
+	if filesystem.MountPoint != "" && filesystem.Type != "" {
+		err := isValidFileSystem(device.Spec.FileSystem, device.Status.DeviceStatus.FileSystem)
+		if err != nil {
 			return err
 		}
 	}
 
-	if mountPoint != "" {
-		logrus.Debugf("start mounting disk %s to %s", devPath, mountPoint)
-		if err := disk.MountDisk(devPath, mountPoint); err != nil {
-			return err
-		}
-	}
+	device.Status.DeviceStatus.FileSystem.MountPoint = filesystem.MountPoint
+	device.Status.DeviceStatus.FileSystem.Type = filesystem.Type
+	device.Status.DeviceStatus.FileSystem.IsReadOnly = filesystem.IsReadOnly
 	return nil
 }
 
@@ -312,20 +309,18 @@ func updateDeviceMount(devPath, mountPoint, existingMount string) error {
 //
 // - umount the block device if it is mounted
 // - create ext4 filesystem on the block device
-func (c *Controller) forceFormat(device *diskv1.BlockDevice) error {
-	filesystem := device.Spec.FileSystem
-	fsStatus := device.Status.DeviceStatus.FileSystem
-	logrus.Infof("performing format operation of disk %s, mount path %s", device.Spec.DevPath, filesystem.MountPoint)
-
+func (c *Controller) forceFormat(device *diskv1.BlockDevice, filesystem *block.FileSystemInfo) error {
 	// umount the disk if it is mounted
-	if fsStatus.MountPoint != "" {
-		if err := disk.UmountDisk(fsStatus.MountPoint); err != nil {
+	if filesystem != nil && filesystem.MountPoint != "" {
+		logrus.Infof("unmount %s for %s", filesystem.MountPoint, device.Name)
+		if err := disk.UmountDisk(filesystem.MountPoint); err != nil {
 			return err
 		}
 	}
 
 	// make ext4 filesystem format of the partition disk
-	logrus.Debugf("make ext4 filesystem format of disk %s", device.Spec.DevPath)
+	logrus.Debugf("make ext4 filesystem format of device %s", device.Name)
+	// TODO(weihanglo): Shouldn't use devpath to format because it is not stable.
 	if err := disk.MakeExt4DiskFormatting(device.Spec.DevPath); err != nil {
 		return err
 	}
