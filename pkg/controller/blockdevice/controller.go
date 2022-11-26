@@ -250,10 +250,7 @@ func (c *Controller) updateDeviceMount(device *diskv1.BlockDevice, devPath strin
 		diskv1.DeviceMounted.SetError(device, "", nil)
 		diskv1.DeviceMounted.SetStatusBool(device, true)
 	}
-	if needMountUpdate != NeedMountUpdateNoOp {
-		return c.updateDeviceFileSystem(device, devPath)
-	}
-	return nil
+	return c.updateDeviceFileSystem(device, devPath)
 }
 
 func (c *Controller) updateDeviceFileSystem(device *diskv1.BlockDevice, devPath string) error {

@@ -301,10 +301,7 @@ func diskIsRemovable(paths *linuxpath.Paths, disk string) bool {
 		return false
 	}
 	removable := strings.TrimSpace(string(contents))
-	if removable == "1" {
-		return true
-	}
-	return false
+	return removable == "1"
 }
 
 func getDisk(ctx *context.Context, paths *linuxpath.Paths, dname string) *Disk {
