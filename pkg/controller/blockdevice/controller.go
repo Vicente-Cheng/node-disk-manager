@@ -21,7 +21,6 @@ import (
 
 	diskv1 "github.com/harvester/node-disk-manager/pkg/apis/harvesterhci.io/v1beta1"
 	"github.com/harvester/node-disk-manager/pkg/block"
-	"github.com/harvester/node-disk-manager/pkg/disk"
 	ctldiskv1 "github.com/harvester/node-disk-manager/pkg/generated/controllers/harvesterhci.io/v1beta1"
 	ctllonghornv1 "github.com/harvester/node-disk-manager/pkg/generated/controllers/longhorn.io/v1beta1"
 	"github.com/harvester/node-disk-manager/pkg/option"
@@ -235,7 +234,7 @@ func (c *Controller) updateDeviceMount(device *diskv1.BlockDevice, devPath strin
 	}
 	if needMountUpdate.Has(NeedMountUpdateUnmount) {
 		logrus.Infof("Unmount device %s from path %s", device.Name, filesystem.MountPoint)
-		if err := disk.UmountDisk(filesystem.MountPoint); err != nil {
+		if err := util.UmountDisk(filesystem.MountPoint); err != nil {
 			return err
 		}
 		diskv1.DeviceMounted.SetError(device, "", nil)
@@ -244,7 +243,7 @@ func (c *Controller) updateDeviceMount(device *diskv1.BlockDevice, devPath strin
 	if needMountUpdate.Has(NeedMountUpdateMount) {
 		expectedMountPoint := extraDiskMountPoint(device)
 		logrus.Infof("Mount deivce %s to %s", device.Name, expectedMountPoint)
-		if err := disk.MountDisk(devPath, expectedMountPoint); err != nil {
+		if err := util.MountDisk(devPath, expectedMountPoint); err != nil {
 			return err
 		}
 		diskv1.DeviceMounted.SetError(device, "", nil)
@@ -288,7 +287,7 @@ func (c *Controller) forceFormat(device *diskv1.BlockDevice, devPath string, fil
 	// umount the disk if it is mounted
 	if filesystem != nil && filesystem.MountPoint != "" {
 		logrus.Infof("unmount %s for %s", filesystem.MountPoint, device.Name)
-		if err := disk.UmountDisk(filesystem.MountPoint); err != nil {
+		if err := util.UmountDisk(filesystem.MountPoint); err != nil {
 			return err
 		}
 	}
@@ -316,7 +315,7 @@ func (c *Controller) forceFormat(device *diskv1.BlockDevice, devPath string, fil
 			uuid = ""
 		}
 	}
-	if err := disk.MakeExt4DiskFormatting(devPath, uuid); err != nil {
+	if err := util.MakeExt4DiskFormatting(devPath, uuid); err != nil {
 		return err
 	}
 
@@ -541,7 +540,7 @@ func (c *Controller) OnBlockDeviceDelete(key string, device *diskv1.BlockDevice)
 		}
 		existingMount := bd.Status.DeviceStatus.FileSystem.MountPoint
 		if existingMount != "" {
-			if err := disk.UmountDisk(existingMount); err != nil {
+			if err := util.UmountDisk(existingMount); err != nil {
 				logrus.Warnf("cannot umount disk %s from mount point %s, err: %s", bd.Name, existingMount, err.Error())
 			}
 		}
