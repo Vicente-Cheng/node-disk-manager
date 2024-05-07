@@ -98,6 +98,7 @@ func (s *Scanner) collectAllDevices() []*deviceWithAutoProvision {
 			logrus.Infof("Skip adding non-identifiable block device /dev/%s", disk.Name)
 			continue
 		}
+		logrus.Debugf("Adding the disk block device /dev/%s, bd Name: %s", disk.Name, bd.Name)
 		autoProv := s.ApplyAutoProvisionFiltersForDisk(disk)
 		allDevices = append(allDevices, &deviceWithAutoProvision{bd: bd, AutoProvisioned: autoProv})
 
@@ -133,9 +134,11 @@ func (s *Scanner) scanBlockDevicesOnNode() error {
 	}
 
 	oldBds, existingWWNs := convertBlockDeviceListToMap(oldBdList)
+	logrus.Debugf("The current BdList: %+v", oldBds)
 	for _, device := range allDevices {
 		bd := device.bd
 		autoProvisioned := device.AutoProvisioned
+		logrus.Debugf("Processing block device %s with wwn: %s", bd.Name, bd.Status.DeviceStatus.Details.WWN)
 		if oldBd, ok := oldBds[bd.Name]; ok {
 			if isDevPathChanged(oldBd, bd) {
 				logrus.Debugf("Enqueue block device %s for device path change", bd.Name)
