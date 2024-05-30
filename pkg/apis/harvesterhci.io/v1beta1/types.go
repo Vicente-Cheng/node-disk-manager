@@ -42,6 +42,9 @@ type BlockDeviceSpec struct {
 
 	// a string list with device tag for provisioner, e.g. ["default", "small", "ssd"]
 	Tags []string `json:"tags,omitempty"`
+
+	// a string with the provisioner name, e.g. "Longhornv1, Longhornv2 or LocalLVM"
+	Provisioner string `json:"provisioner,omitempty"`
 }
 
 type BlockDeviceStatus struct {
@@ -62,6 +65,9 @@ type BlockDeviceStatus struct {
 
 	// The current Tags of the blockdevice
 	Tags []string `json:"tags,omitempty"`
+
+	// a string with the provisioner name, e.g. "Longhornv1, Longhornv2 or LocalLVM"
+	Provisioner string `json:"provisioner,omitempty"`
 }
 
 type FilesystemInfo struct {
