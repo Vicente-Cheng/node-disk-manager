@@ -35,7 +35,7 @@ func (f NeedMountUpdateOP) Has(flag NeedMountUpdateOP) bool {
 }
 
 type Provisioner interface {
-	Format() (bool, bool, error)
+	Format(string) (bool, bool, error)
 	UnFormat() (bool, error)
 	Provision() (bool, error)
 	UnProvision() (bool, error)

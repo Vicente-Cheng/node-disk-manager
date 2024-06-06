@@ -246,18 +246,12 @@ func (p *LonghornV1Provisioner) Update() (bool, error) {
 	return false, nil
 }
 
-func (p *LonghornV1Provisioner) Format() (bool, bool, error) {
+func (p *LonghornV1Provisioner) Format(devPath string) (bool, bool, error) {
 	logrus.Infof("%s formatting Longhorn block device %s", p.name, p.device.Name)
+	var err error
 	formatted := false
 	requeue := false
 
-	devPath, err := ResolvePersistentDevPath(p.device)
-	if err != nil {
-		return formatted, requeue, err
-	}
-	if devPath == "" {
-		return formatted, requeue, fmt.Errorf("failed to resolve persistent dev path for block device %s", p.device.Name)
-	}
 	filesystem := p.blockInfo.GetFileSystemInfoByDevPath(devPath)
 	devPathStatus := convertFSInfoToString(filesystem)
 	logrus.Debugf("Get filesystem info from device %s, %s", devPath, devPathStatus)
@@ -268,9 +262,8 @@ func (p *LonghornV1Provisioner) Format() (bool, bool, error) {
 			err := fmt.Errorf("failed to force format device %s: %s", p.device.Name, err.Error())
 			diskv1.DeviceFormatting.SetError(p.device, "", err)
 			diskv1.DeviceFormatting.SetStatusBool(p.device, false)
-			return formatted, requeue, err
 		}
-		return formatted, requeue, nil
+		return formatted, requeue, err
 	}
 
 	if needMountUpdate := needUpdateMountPoint(p.device, filesystem); needMountUpdate != NeedMountUpdateNoOp {
@@ -283,7 +276,7 @@ func (p *LonghornV1Provisioner) Format() (bool, bool, error) {
 		return formatted, requeue, err
 	}
 	formatted = true
-	return true, false, nil
+	return formatted, false, nil
 }
 
 func (p *LonghornV1Provisioner) UnFormat() (bool, error) {

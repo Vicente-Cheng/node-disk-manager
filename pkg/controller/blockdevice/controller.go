@@ -110,13 +110,9 @@ func (c *Controller) OnBlockDeviceChange(_ string, device *diskv1.BlockDevice) (
 
 	// handle remove device no matter inactive or corrupted, we will set `device.Spec.FileSystem.Provisioned` to false
 	if needProvisionerUnprovision(device) {
-		if requeue, err := provisionerInst.UnProvision(); requeue {
-			if err != nil {
-				diskv1.DiskAddedToNode.SetError(deviceCpy, "", err)
-				diskv1.DiskAddedToNode.SetStatusBool(deviceCpy, false)
-			}
-			c.Blockdevices.EnqueueAfter(c.Namespace, device.Name, jitterEnqueueDelay())
-		}
+		requeue, err := provisionerInst.UnProvision()
+		c.handleCondDiskAddedToNodeAndRequeue(deviceCpy, err, requeue)
+
 		if !reflect.DeepEqual(device, deviceCpy) {
 			logrus.Debugf("Update block device %s after removing", device.Name)
 			return c.Blockdevices.Update(deviceCpy)
@@ -137,7 +133,7 @@ func (c *Controller) OnBlockDeviceChange(_ string, device *diskv1.BlockDevice) (
 		return nil, fmt.Errorf("failed to resolve persistent dev path for block device %s", device.Name)
 	}
 
-	if formatted, requeue, err := provisionerInst.Format(); !formatted {
+	if formatted, requeue, err := provisionerInst.Format(devPath); !formatted {
 		if requeue {
 			c.Blockdevices.EnqueueAfter(c.Namespace, device.Name, jitterEnqueueDelay())
 		}
@@ -159,30 +155,27 @@ func (c *Controller) OnBlockDeviceChange(_ string, device *diskv1.BlockDevice) (
 	 */
 	if needProvisionerUpdate(device, deviceCpy) {
 		logrus.Infof("Prepare to check the new device tags %v with device: %s", deviceCpy.Spec.Tags, device.Name)
-		if requeue, err := provisionerInst.Update(); requeue {
-			if err != nil {
-				err := fmt.Errorf("failed to provision device %s to node %s: %w", device.Name, c.NodeName, err)
-				diskv1.DiskAddedToNode.SetError(deviceCpy, "", err)
-				diskv1.DiskAddedToNode.SetStatusBool(deviceCpy, false)
-			}
-			c.Blockdevices.EnqueueAfter(c.Namespace, device.Name, jitterEnqueueDelay())
-		}
+		requeue, err := provisionerInst.Update()
+		c.handleCondDiskAddedToNodeAndRequeue(deviceCpy, err, requeue)
 	}
 
 	if needProvisionerProvision(device, deviceCpy) {
 		logrus.Infof("Prepare to provision device %s to node %s", device.Name, c.NodeName)
-		if requeue, err := provisionerInst.Provision(); requeue {
-			if err != nil {
-				err := fmt.Errorf("failed to provision device %s to node %s: %w", device.Name, c.NodeName, err)
-				diskv1.DiskAddedToNode.SetError(deviceCpy, "", err)
-				diskv1.DiskAddedToNode.SetStatusBool(deviceCpy, false)
-			}
-			c.Blockdevices.EnqueueAfter(c.Namespace, device.Name, jitterEnqueueDelay())
-
-		}
+		requeue, err := provisionerInst.Provision()
+		c.handleCondDiskAddedToNodeAndRequeue(deviceCpy, err, requeue)
 	}
 
 	return c.finalizeBlockDevice(device, deviceCpy, devPath)
+}
+
+func (c *Controller) handleCondDiskAddedToNodeAndRequeue(device *diskv1.BlockDevice, err error, requeue bool) {
+	if err != nil {
+		diskv1.DiskAddedToNode.SetError(device, "", err)
+		diskv1.DiskAddedToNode.SetStatusBool(device, false)
+	}
+	if requeue {
+		c.Blockdevices.EnqueueAfter(c.Namespace, device.Name, jitterEnqueueDelay())
+	}
 }
 
 func (c *Controller) finalizeBlockDevice(oldBd, newBd *diskv1.BlockDevice, devPath string) (*diskv1.BlockDevice, error) {
