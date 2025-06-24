@@ -10,7 +10,6 @@ jobs:
   build-for-master:
     uses: ./.github/workflows/factory.yaml
     with:
-      refs: master
       tag: master-head
       push: true
     secrets: inherit
