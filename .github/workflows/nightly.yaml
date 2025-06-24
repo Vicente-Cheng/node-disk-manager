@@ -15,7 +15,7 @@ jobs:
       push: true
     secrets: inherit
   
-  build-for-v1.6:
+  build-for-v1_6:
     uses: ./.github/workflows/factory.yaml
     with:
       refs: v1.6
