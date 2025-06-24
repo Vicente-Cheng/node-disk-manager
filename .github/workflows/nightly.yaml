@@ -7,10 +7,18 @@ on:
     - cron:  '30 3 * * *'
 
 jobs:
-  build-for-dev:
+  build-for-master:
     uses: ./.github/workflows/factory.yaml
     with:
-      ref: v1.6
-      tag: ${{ github.ref_name }}-head
+      refs: master
+      tag: master-head
+      push: true
+    secrets: inherit
+  
+  build-for-v1.6:
+    uses: ./.github/workflows/factory.yaml
+    with:
+      refs: v1.6
+      tag: v1.6-head
       push: true
     secrets: inherit
