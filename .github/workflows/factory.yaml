@@ -23,7 +23,8 @@ jobs:
       contents: read
       id-token: write
     steps:
-    - name: Checkout code
+    - name: Checkout code without refs
+      if: ${{ inputs.refs == '' }}
       uses: actions/checkout@v4
 
     - name: Checkout code with refs
